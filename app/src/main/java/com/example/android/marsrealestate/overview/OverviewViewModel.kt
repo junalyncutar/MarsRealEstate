@@ -26,23 +26,32 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import retrofit2.Call
-import retrofit2.Callback
-import retrofit2.Response
+
+enum class MarsApiStatus { LOADING, ERROR, DONE }
 
 /**
  * The [ViewModel] that is attached to the [OverviewFragment].
  */
 class OverviewViewModel : ViewModel() {
 
-    // The internal MutableLiveData String that stores the most recent response
-    private val _response = MutableLiveData<String>()
+    private val _status = MutableLiveData<MarsApiStatus>()
 
-    // The external immutable LiveData for the response String
-    val response: LiveData<String>
-        get() = _response
+    val status: LiveData<MarsApiStatus>
+        get() = _status
 
+    // Internally, we use a MutableLiveData, because we will be updating the List of MarsProperty
+    // with new values
+    private val _properties = MutableLiveData<List<MarsProperty>>()
+
+    // The external LiveData interface to the property is immutable, so only this class can modify
+    val properties: LiveData<List<MarsProperty>>
+        get() = _properties
+
+    // Create a Coroutine scope using a job to be able to cancel when needed
     private var viewModelJob = Job()
+
+    // the Coroutine runs using the Main (UI) dispatcher
+    private val coroutineScope = CoroutineScope(viewModelJob + Dispatchers.Main)
 
     /**
      * Call getMarsRealEstateProperties() on init so we can display status immediately.
@@ -52,26 +61,34 @@ class OverviewViewModel : ViewModel() {
     }
 
     /**
-     * Sets the value of the status LiveData to the Mars API status.
+     * Gets Mars real estate property information from the Mars API Retrofit service and updates the
+     * [MarsProperty] [List] [LiveData]. The Retrofit service returns a coroutine Deferred, which we
+     * await to get the result of the transaction.
      */
     private fun getMarsRealEstateProperties() {
         coroutineScope.launch {
+            _status.value = MarsApiStatus.LOADING
+            // this will run on a thread managed by Retrofit
             var getPropertiesDeferred = MarsApi.retrofitService.getProperties()
             try {
-                var listResult = getPropertiesDeferred.await()
-                _response.value =
-                        "Success: ${listResult.size} Mars properties retrieved"
+                _status.value = MarsApiStatus.LOADING
+                // this will run on a thread managed by Retrofit
+                val listResult = getPropertiesDeferred.await()
+                _status.value = MarsApiStatus.DONE
+                _properties.value = listResult
             } catch (e: Exception) {
-                _response.value = "Failure: ${e.message}"
+                _status.value = MarsApiStatus.ERROR
+                _properties.value = ArrayList()
             }
         }
     }
 
+    /**
+     * When the [ViewModel] is finished, we cancel our coroutine [viewModelJob], which tells the
+     * Retrofit service to stop.
+     */
     override fun onCleared() {
         super.onCleared()
         viewModelJob.cancel()
     }
-
-    private val coroutineScope = CoroutineScope(
-        viewModelJob + Dispatchers.Main )
 }
